@@ -97,7 +97,6 @@ def evaluate(model, test_loader, config, round_vals=True, round_precision=3):
             Image.fromarray(p).save(os.path.join(config.save_images, f"{i}_pred.png"))
 
 
-
         # print(depth.shape, pred.shape)
         metrics.update(compute_metrics(depth, pred, config=config))
 

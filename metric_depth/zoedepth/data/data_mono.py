@@ -377,6 +377,10 @@ class DataLoadPreprocess(Dataset):
 
             image_path = os.path.join(
                 data_path, remove_leading_slash(sample_path.split()[0]))
+            
+            if image_path.endswith('.png'):
+                image_path = image_path[:-4] + '.jpg'
+
             image = np.asarray(self.reader.open(image_path),
                                dtype=np.float32) / 255.0
 
@@ -385,12 +389,21 @@ class DataLoadPreprocess(Dataset):
                 depth_path = os.path.join(
                     gt_path, remove_leading_slash(sample_path.split()[1]))
                 has_valid_depth = False
+
+                ## add date in path
+                if self.config.dataset == 'kitti':
+                    depth_p = depth_path.split('/')[4][:10]
+                    depth_path = os.path.join(gt_path, depth_p, remove_leading_slash(sample_path.split()[1]))
+
+                if depth_path.endswith('.jpg'):
+                    depth_path = depth_path[:-4] + '.png'
+                
                 try:
                     depth_gt = self.reader.open(depth_path)
                     has_valid_depth = True
                 except IOError:
                     depth_gt = False
-                    # print('Missing gt for {}'.format(image_path))
+                    # print('Missing gt for {}'.format(depth_path))
 
                 if has_valid_depth:
                     depth_gt = np.asarray(depth_gt, dtype=np.float32)
