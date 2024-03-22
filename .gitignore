@@ -1,4 +1,11 @@
 *.pt
 *.pth
 
+__pycache__/
+**/__pycache__/
+
 *.pyc
+*.log
+*.wandb
+metric_depth/wandb
+*.png

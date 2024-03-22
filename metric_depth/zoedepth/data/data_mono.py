@@ -306,6 +306,16 @@ class DataLoadPreprocess(Dataset):
                 depth_path = os.path.join(
                     self.config.gt_path, remove_leading_slash(sample_path.split()[1]))
 
+            if image_path.endswith('.png'):
+                image_path = image_path[:-4] + '.jpg'
+
+            if self.config.dataset == 'kitti':
+                depth_p = depth_path.split('/')[4][:10]
+                depth_path = os.path.join(self.config.gt_path, depth_p, remove_leading_slash(sample_path.split()[1]))
+
+            if depth_path.endswith('.jpg'):
+                depth_path = depth_path[:-4] + '.png'
+
             image = self.reader.open(image_path)
             depth_gt = self.reader.open(depth_path)
             w, h = image.size
@@ -319,6 +329,19 @@ class DataLoadPreprocess(Dataset):
                     (left_margin, top_margin, left_margin + 1216, top_margin + 352))
                 image = image.crop(
                     (left_margin, top_margin, left_margin + 1216, top_margin + 352))
+                
+            if self.config.multi_view:
+                try:
+                    prev_image_path = os.path.join('/',*image_path.split("/")[:-1], "{0:010d}.jpg".format(int(image_path.split("/")[-1].split(".")[0])-1))
+                except:
+                    print(os.path.join('/',*image_path.split("/")[:-1], "{0:010d}.jpg".format(int(image_path.split("/")[-1].split(".")[0])-1)))
+                    prev_image_path = image_path
+
+                prev_image = self.reader.open(prev_image_path)
+
+                if self.config.do_kb_crop:
+                    prev_image = prev_image.crop(
+                        (left_margin, top_margin, left_margin + 1216, top_margin + 352))
 
             # Avoid blank boundaries due to pixel registration?
             # Train images have white border. Test images have black border.
@@ -350,24 +373,33 @@ class DataLoadPreprocess(Dataset):
             depth_gt = np.asarray(depth_gt, dtype=np.float32)
             depth_gt = np.expand_dims(depth_gt, axis=2)
 
+            if self.config.multi_view:
+                prev_image = np.asarray(prev_image, dtype=np.float32) / 255.0
+
             if self.config.dataset == 'nyu':
                 depth_gt = depth_gt / 1000.0
             else:
                 depth_gt = depth_gt / 256.0
 
             if self.config.aug and (self.config.random_crop):
+                assert not self.config.multi_view, "Random crop not supported for multi-view"
                 image, depth_gt = self.random_crop(
                     image, depth_gt, self.config.input_height, self.config.input_width)
             
             if self.config.aug and self.config.random_translate:
                 # print("Random Translation!")
+                assert not self.config.multi_view, "Random translate not supported for multi-view"
                 image, depth_gt = self.random_translate(image, depth_gt, self.config.max_translation)
 
-            image, depth_gt = self.train_preprocess(image, depth_gt)
+            image, depth_gt, prev_image = self.train_preprocess(image, depth_gt, prev_image if self.config.multi_view else None)
             mask = np.logical_and(depth_gt > self.config.min_depth,
                                   depth_gt < self.config.max_depth).squeeze()[None, ...]
-            sample = {'image': image, 'depth': depth_gt, 'focal': focal,
-                      'mask': mask, **sample}
+            if self.config.multi_view:
+                sample = {'image': image, 'depth': depth_gt, 'focal': focal,
+                        'mask': mask, 'prev_image': prev_image,**sample}
+            else:
+                sample = {'image': image, 'depth': depth_gt, 'focal': focal,
+                        'mask': mask, **sample}
 
         else:
             if self.mode == 'online_eval':
@@ -383,6 +415,16 @@ class DataLoadPreprocess(Dataset):
 
             image = np.asarray(self.reader.open(image_path),
                                dtype=np.float32) / 255.0
+            
+            if self.config.multi_view:
+                try:
+                    prev_image_path = os.path.join('/',*image_path.split("/")[:-1], "{0:010d}.jpg".format(int(image_path.split("/")[-1].split(".")[0])-1))
+                except:
+                    print(os.path.join('/',*image_path.split("/")[:-1], "{0:010d}.jpg".format(int(image_path.split("/")[-1].split(".")[0])-1)))
+                    prev_image_path = image_path
+
+                prev_image = self.reader.open(prev_image_path)
+                prev_image = np.asarray(prev_image, dtype=np.float32) / 255.0
 
             if self.mode == 'online_eval':
                 gt_path = self.config.gt_path_eval
@@ -428,11 +470,18 @@ class DataLoadPreprocess(Dataset):
                 if self.mode == 'online_eval' and has_valid_depth:
                     depth_gt = depth_gt[top_margin:top_margin +
                                         352, left_margin:left_margin + 1216, :]
+                    
+                if self.config.multi_view:
+                    prev_image = prev_image[top_margin:top_margin + 352,
+                                            left_margin:left_margin + 1216, :]
+            
 
             if self.mode == 'online_eval':
                 sample = {'image': image, 'depth': depth_gt, 'focal': focal, 'has_valid_depth': has_valid_depth,
                           'image_path': sample_path.split()[0], 'depth_path': sample_path.split()[1],
                           'mask': mask}
+                if self.config.multi_view:
+                    sample['prev_image'] = prev_image
             else:
                 sample = {'image': image, 'focal': focal}
 
@@ -444,7 +493,7 @@ class DataLoadPreprocess(Dataset):
         if self.transform:
             sample = self.transform(sample)
 
-        sample = self.postprocess(sample)
+        sample = self.postprocess(sample)      
         sample['dataset'] = self.config.dataset
         sample = {**sample, 'image_path': sample_path.split()[0], 'depth_path': sample_path.split()[1]}
 
@@ -483,20 +532,24 @@ class DataLoadPreprocess(Dataset):
         # print("after", img.shape, depth.shape)
         return img, depth
 
-    def train_preprocess(self, image, depth_gt):
+    def train_preprocess(self, image, depth_gt, prev_image = None):
         if self.config.aug:
             # Random flipping
             do_flip = random.random()
             if do_flip > 0.5:
                 image = (image[:, ::-1, :]).copy()
                 depth_gt = (depth_gt[:, ::-1, :]).copy()
+                if prev_image is not None:
+                    prev_image = (prev_image[:, ::-1, :]).copy()
 
             # Random gamma, brightness, color augmentation
             do_augment = random.random()
             if do_augment > 0.5:
                 image = self.augment_image(image)
+                if prev_image is not None:
+                    prev_image = self.augment_image(prev_image)
 
-        return image, depth_gt
+        return image, depth_gt, prev_image
 
     def augment_image(self, image):
         # gamma augmentation
@@ -540,18 +593,33 @@ class ToTensor(object):
         image = self.normalize(image)
         image = self.resize(image)
 
+        if 'prev_image' in sample:
+            prev_image = sample['prev_image']
+            prev_image = self.to_tensor(prev_image)
+            prev_image = self.normalize(prev_image)
+            prev_image = self.resize(prev_image)
+
         if self.mode == 'test':
-            return {'image': image, 'focal': focal}
+            out_dict = {'image': image, 'focal': focal}
+            if 'prev_image' in sample:
+                out_dict['prev_image'] = prev_image
+            return out_dict
 
         depth = sample['depth']
         if self.mode == 'train':
             depth = self.to_tensor(depth)
-            return {**sample, 'image': image, 'depth': depth, 'focal': focal}
+            out_dict = {**sample, 'image': image, 'depth': depth, 'focal': focal}
+            if 'prev_image' in sample:
+                out_dict['prev_image'] = prev_image
+            return out_dict
         else:
             has_valid_depth = sample['has_valid_depth']
             image = self.resize(image)
-            return {**sample, 'image': image, 'depth': depth, 'focal': focal, 'has_valid_depth': has_valid_depth,
+            out_dict = {**sample, 'image': image, 'depth': depth, 'focal': focal, 'has_valid_depth': has_valid_depth,
                     'image_path': sample['image_path'], 'depth_path': sample['depth_path']}
+            if 'prev_image' in sample:
+                out_dict['prev_image'] = prev_image
+            return out_dict
 
     def to_tensor(self, pic):
         if not (_is_pil_image(pic) or _is_numpy_image(pic)):

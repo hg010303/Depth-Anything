@@ -116,6 +116,7 @@ if __name__ == '__main__':
     parser.add_argument("-m", "--model", type=str, default="synunet")
     parser.add_argument("-d", "--dataset", type=str, default='nyu')
     parser.add_argument("--trainer", type=str, default=None)
+    parser.add_argument("--multi_view", action="store_true")
 
     args, unknown_args = parser.parse_known_args()
     overwrite_kwargs = parse_unknown(unknown_args)
@@ -124,6 +125,10 @@ if __name__ == '__main__':
     if args.trainer is not None:
         overwrite_kwargs["trainer"] = args.trainer
 
+    arg_dict = args.__dict__.copy()
+    del(arg_dict["model"]); del(arg_dict["dataset"]); del(arg_dict["trainer"])
+    overwrite_kwargs.update(arg_dict)
+
     config = get_config(args.model, "train", args.dataset, **overwrite_kwargs)
     # git_commit()
     if config.use_shared_dict:
@@ -131,7 +136,6 @@ if __name__ == '__main__':
     else:
         shared_dict = None
     config.shared_dict = shared_dict
-
     config.batch_size = config.bs
     config.mode = 'train'
     if config.root != "." and not os.path.isdir(config.root):

@@ -54,6 +54,9 @@ class Trainer(BaseTrainer):
 
         images, depths_gt = batch['image'].to(
             self.device), batch['depth'].to(self.device)
+        if self.config.multi_view:
+            perv_image = batch['perv_image'].to(self.device)
+
         dataset = batch['dataset'][0]
 
         b, c, h, w = images.size()
@@ -62,7 +65,7 @@ class Trainer(BaseTrainer):
         losses = {}
 
         with amp.autocast(enabled=self.config.use_amp):
-
+            
             output = self.model(images)
             pred_depths = output['metric_depth']
 

@@ -147,7 +147,7 @@ class BaseTrainer:
         self.config.run_id = run_id
         self.config.experiment_id = f"{self.config.name}{self.config.version_name}_{run_id}"
         self.should_write = ((not self.config.distributed)
-                             or self.config.rank == 0)
+                             or self.config.rank == 0) and self.config.wandb==True 
         self.should_log = self.should_write  # and logging
         if self.should_log:
             tags = self.config.tags.split(
